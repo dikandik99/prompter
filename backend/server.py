@@ -407,6 +407,78 @@ async def google_session(body: SessionBody):
     )
 
 
+# --- Sign in with Apple -----------------------------------------------------
+APPLE_AUDIENCES = [a.strip() for a in os.environ.get("APPLE_AUDIENCES", "").split(",") if a.strip()]
+APPLE_ISSUER = "https://appleid.apple.com"
+_apple_jwks = jwt.PyJWKClient("https://appleid.apple.com/auth/keys", cache_keys=True)
+
+
+class AppleBody(BaseModel):
+    identity_token: str = Field(min_length=20, max_length=8192)
+    name: Optional[str] = Field(default=None, max_length=80)
+    email: Optional[EmailStr] = None
+
+
+@api.post("/auth/apple", response_model=AuthResponse)
+async def apple_sign_in(body: AppleBody):
+    """Verify an Apple identity token (RS256 vs Apple JWKS) and issue our JWT.
+
+    Users are keyed by Apple `sub` (identities), falling back to email so an
+    existing password/Google account with the same email is reused.
+    """
+    if not APPLE_AUDIENCES:
+        raise HTTPException(503, "Sign in with Apple is not configured on the server")
+    try:
+        signing_key = _apple_jwks.get_signing_key_from_jwt(body.identity_token)
+        claims = jwt.decode(
+            body.identity_token,
+            signing_key.key,
+            algorithms=["RS256"],
+            issuer=APPLE_ISSUER,
+            audience=APPLE_AUDIENCES,
+        )
+    except jwt.PyJWTError as exc:
+        logger.warning("Apple token rejected: %s", exc)
+        raise AuthError("Apple sign-in token is invalid or expired")
+    sub = claims.get("sub")
+    if not sub:
+        raise AuthError("Apple token missing subject")
+    identity = {"provider": "apple", "provider_identity": f"apple:{sub}"}
+    email = (body.email or claims.get("email") or "").lower().strip()
+
+    row = await db.users.find_one({"identities.provider_identity": identity["provider_identity"]})
+    if not row and email:
+        row = await db.users.find_one({"email": email})
+    if row:
+        patch: dict = {}
+        if not row.get("name") and body.name:
+            patch["name"] = body.name.strip()
+        update: dict = {"$addToSet": {"identities": identity}}
+        if patch:
+            update["$set"] = patch
+        await db.users.update_one({"_id": row["_id"]}, update)
+        row = await db.users.find_one({"_id": row["_id"]})
+    else:
+        row = {
+            "email": email or f"apple_{sub}@privaterelay.appleid.local",
+            "name": (body.name or "").strip(),
+            "password_hash": None,
+            "photo_url": None,
+            "created_at": now_utc(),
+            "disabled": False,
+            "identities": [identity],
+        }
+        res = await db.users.insert_one(row)
+        row["_id"] = res.inserted_id
+    if row.get("disabled"):
+        raise AuthError("Account disabled")
+    return AuthResponse(
+        access_token=make_token(str(row["_id"])),
+        expires_in=ACCESS_MINUTES * 60,
+        user=public_user(row),
+    )
+
+
 @api.get("/auth/me")
 async def me(user: CurrentUser):
     data = public_user(user)
