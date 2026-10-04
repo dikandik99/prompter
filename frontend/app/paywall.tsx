@@ -1,8 +1,10 @@
 import { useQuery } from "@tanstack/react-query";
 import { LinearGradient } from "expo-linear-gradient";
+import * as ExpoLinking from "expo-linking";
 import { useRouter } from "expo-router";
+import * as WebBrowser from "expo-web-browser";
 import { useState } from "react";
-import { ActivityIndicator, Linking, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
+import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import Ionicons from "@react-native-vector-icons/ionicons";
 
@@ -16,6 +18,15 @@ import { makeStyles, radius, spacing, useTheme } from "@/src/theme";
 
 type Plan = { id: string; interval: string; price_display: string; best_value: boolean; savings_pct?: number; monthly_equivalent?: string };
 type Pricing = { currency: string; providers: string[]; features: { icon: string; key: string }[]; plans: Plan[] };
+type CheckoutResponse = {
+  order_id: string;
+  provider: string;
+  plan_id: string;
+  status: string;
+  checkout_url: string | null;
+  subscription_id?: string;
+  message?: string;
+};
 
 const PROVIDER_META: Record<string, { label: string; icon: string }> = {
   midtrans: { label: "Midtrans", icon: "card-outline" },
@@ -50,12 +61,46 @@ export default function Paywall() {
     }
     setBusy(true);
     try {
-      const res = await apiFetch<{ message: string }>("/subscription/checkout", {
+      const returnUrl = ExpoLinking.createURL("paypal-return");
+      const cancelUrl = ExpoLinking.createURL("paypal-cancel");
+      const res = await apiFetch<CheckoutResponse>("/subscription/checkout", {
         method: "POST",
         auth: true,
-        body: { plan_id: selected, provider, country: "ID" },
+        body: {
+          plan_id: selected,
+          provider,
+          country: "ID",
+          return_url: returnUrl,
+          cancel_url: cancelUrl,
+        },
       });
-      toast.show(res.message, "info");
+
+      // PayPal (or any provider that returns an approval URL): open the hosted
+      // approval page, then confirm the subscription when we are redirected back.
+      if (res.checkout_url) {
+        const result = await WebBrowser.openAuthSessionAsync(res.checkout_url, returnUrl);
+        if (result.type === "success") {
+          const ent = await apiFetch<any>("/subscription/paypal/capture", {
+            method: "POST",
+            auth: true,
+            body: { order_id: res.order_id },
+          });
+          setEntitlement(ent);
+          await refresh();
+          if (ent?.plan === "pro") {
+            toast.show("PRO aktif. Terima kasih!", "success");
+            router.back();
+          } else {
+            toast.show("Menunggu konfirmasi PayPal. Coba 'Pulihkan pembelian' sebentar lagi.", "info");
+          }
+        } else {
+          toast.show("Pembayaran dibatalkan", "info");
+        }
+        return;
+      }
+
+      // Provider not yet configured on the server -> informative message.
+      toast.show(res.message || "Metode pembayaran belum tersedia", "info");
     } catch (e: any) {
       toast.show(e.message || "Checkout gagal", "error");
     } finally {

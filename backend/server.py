@@ -26,13 +26,15 @@ import httpx
 import jwt
 from bson import ObjectId
 from dotenv import load_dotenv
-from fastapi import APIRouter, Depends, FastAPI, HTTPException
+from fastapi import APIRouter, Depends, FastAPI, HTTPException, Request
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from motor.motor_asyncio import AsyncIOMotorClient
 from passlib.context import CryptContext
 from pydantic import BaseModel, EmailStr, Field
 from pymongo.errors import DuplicateKeyError
 from starlette.middleware.cors import CORSMiddleware
+
+import paypal_service as paypal
 
 ROOT_DIR = Path(__file__).parent
 load_dotenv(ROOT_DIR / ".env")
@@ -208,6 +210,20 @@ def build_pricing(country: str) -> dict:
 # ---------------------------------------------------------------------------
 # Entitlement helpers
 # ---------------------------------------------------------------------------
+# PayPal does not support IDR, so PayPal always charges the USD price regardless
+# of the buyer's country (decided with the product owner).
+PAYPAL_USD = {
+    "pro_monthly": float(PRICING_CATALOG["US"]["monthly"]),
+    "pro_yearly": float(PRICING_CATALOG["US"]["yearly"]),
+}
+PAYPAL_RETURN_URL = os.environ.get("PAYPAL_RETURN_URL", "").strip()
+PAYPAL_CANCEL_URL = os.environ.get("PAYPAL_CANCEL_URL", "").strip()
+
+
+def paypal_amount_usd(plan_id: str) -> float:
+    return PAYPAL_USD.get(plan_id, PAYPAL_USD["pro_monthly"])
+
+
 async def get_entitlement(user_id: str) -> dict:
     sub = await db.subscriptions.find_one({"user_id": user_id, "deleted_at": None})
     if not sub:
@@ -245,6 +261,13 @@ class CheckoutBody(BaseModel):
     plan_id: Literal["pro_monthly", "pro_yearly"]
     provider: Literal["midtrans", "dana", "paypal", "revenuecat", "appstore", "playstore"]
     country: str = "ID"
+    return_url: Optional[str] = None
+    cancel_url: Optional[str] = None
+
+
+class PayPalCaptureBody(BaseModel):
+    order_id: Optional[str] = None
+    subscription_id: Optional[str] = None
 
 
 class TranslateBody(BaseModel):
@@ -294,6 +317,8 @@ async def config():
         "ai_provider": "deepseek",
         "default_country": "ID",
         "default_language": "id",
+        "paypal_enabled": paypal.configured(),
+        "paypal_env": paypal.ENVIRONMENT,
     }
 
 
@@ -506,11 +531,11 @@ async def subscription_me(user: CurrentUser):
 async def checkout(body: CheckoutBody, user: CurrentUser):
     """Create a pending order through a pluggable payment provider.
 
-    Real provider calls (Midtrans/DANA/PayPal/RevenueCat/stores) require their
-    server-side credentials/webhooks which are not configured in this
-    environment, so the order is recorded as `pending` and the provider is
-    returned for the client to continue the native/web checkout once keys are
-    added. The entitlement system itself is fully functional (see webhook).
+    For PayPal (when credentials are configured) this creates a real recurring
+    subscription and returns the buyer approval URL. Other providers, and PayPal
+    when keys are not yet configured, record a `pending` order and return the
+    provider so the client can continue once the keys are added. The entitlement
+    system itself is fully functional (see capture/webhook).
     """
     order_id = str(uuid.uuid4())
     order = {
@@ -523,15 +548,138 @@ async def checkout(body: CheckoutBody, user: CurrentUser):
         "created_at": now_utc(),
         "deleted_at": None,
     }
+
+    # Real PayPal recurring-subscription checkout --------------------------------
+    if body.provider == "paypal" and paypal.configured():
+        return_url = body.return_url or PAYPAL_RETURN_URL
+        cancel_url = body.cancel_url or PAYPAL_CANCEL_URL or return_url
+        if not return_url:
+            raise HTTPException(400, "A return_url is required for PayPal checkout")
+        try:
+            amount = paypal_amount_usd(body.plan_id)
+            paypal_plan_id = await paypal.ensure_plan(db, body.plan_id, amount)
+            sub = await paypal.create_subscription(paypal_plan_id, order_id, return_url, cancel_url)
+        except paypal.PayPalError as exc:
+            logger.error("PayPal checkout failed: %s", exc)
+            raise HTTPException(502, "PayPal is temporarily unavailable. Please try again.")
+        order.update(
+            {
+                "provider": "paypal",
+                "currency": paypal.PAYPAL_CURRENCY,
+                "amount": amount,
+                "paypal_plan_id": paypal_plan_id,
+                "paypal_subscription_id": sub["subscription_id"],
+            }
+        )
+        await db.orders.insert_one(order)
+        return {
+            "order_id": order_id,
+            "provider": "paypal",
+            "plan_id": body.plan_id,
+            "status": "pending",
+            "checkout_url": sub["approval_url"],
+            "subscription_id": sub["subscription_id"],
+            "currency": paypal.PAYPAL_CURRENCY,
+            "amount": amount,
+            "message": "Approve the PayPal subscription to activate PROMPTERA Pro.",
+        }
+
+    # Fallback: record pending order (provider keys not configured) ---------------
     await db.orders.insert_one(order)
+    hint = (
+        "paypal" if body.provider == "paypal" else body.provider
+    )
     return {
         "order_id": order_id,
         "provider": body.provider,
         "plan_id": body.plan_id,
         "status": "pending",
         "checkout_url": None,
-        "message": f"Payment provider '{body.provider}' needs server credentials to complete checkout. Order recorded.",
+        "message": f"Payment provider '{hint}' needs server credentials to complete checkout. Order recorded.",
     }
+
+
+@api.post("/subscription/paypal/capture")
+async def paypal_capture(body: PayPalCaptureBody, user: CurrentUser):
+    """Confirm a PayPal subscription after the buyer approves it in the browser.
+
+    Called by the app when it is redirected back from the PayPal approval page.
+    Grants Pro when PayPal reports the subscription ACTIVE/APPROVED."""
+    if not paypal.configured():
+        raise HTTPException(400, "PayPal is not configured on the server")
+
+    order = None
+    if body.order_id:
+        order = await db.orders.find_one({"_id": body.order_id, "user_id": str(user["_id"])})
+    if not order and body.subscription_id:
+        order = await db.orders.find_one(
+            {"paypal_subscription_id": body.subscription_id, "user_id": str(user["_id"])}
+        )
+    if not order:
+        raise HTTPException(404, "Order not found")
+
+    subscription_id = body.subscription_id or order.get("paypal_subscription_id")
+    if not subscription_id:
+        raise HTTPException(400, "Missing PayPal subscription id")
+
+    try:
+        sub = await paypal.get_subscription(subscription_id)
+    except paypal.PayPalError:
+        raise HTTPException(502, "Could not verify the PayPal subscription")
+
+    status = (sub.get("status") or "").upper()
+    if status in ("ACTIVE", "APPROVED"):
+        await _activate_pro(order["user_id"], order["plan_id"], "paypal", order["_id"], subscription_id)
+        await db.orders.update_one({"_id": order["_id"]}, {"$set": {"status": "paid"}})
+    else:
+        await db.orders.update_one({"_id": order["_id"]}, {"$set": {"status": status.lower() or "pending"}})
+    return await get_entitlement(str(user["_id"]))
+
+
+@api.post("/subscription/webhook/paypal")
+async def paypal_webhook(request: Request):
+    """PayPal server-to-server webhook (reliable activation / cancellation).
+
+    Verifies the signature with PAYPAL_WEBHOOK_ID before acting. Handles
+    subscription activation and cancellation/expiry events."""
+    raw = await request.body()
+    try:
+        event = await request.json()
+    except Exception:
+        raise HTTPException(400, "Invalid JSON")
+
+    verified = await paypal.verify_webhook(dict(request.headers), event)
+    if paypal.WEBHOOK_ID and not verified:
+        logger.warning("Rejected unverified PayPal webhook (%d bytes)", len(raw))
+        raise HTTPException(400, "Webhook signature verification failed")
+
+    event_type = event.get("event_type", "")
+    resource = event.get("resource", {}) or {}
+    subscription_id = resource.get("id") or resource.get("billing_agreement_id")
+    custom_id = resource.get("custom_id")
+
+    order = None
+    if custom_id:
+        order = await db.orders.find_one({"_id": custom_id})
+    if not order and subscription_id:
+        order = await db.orders.find_one({"paypal_subscription_id": subscription_id})
+    if not order:
+        logger.info("PayPal webhook %s: no matching order", event_type)
+        return {"ok": True, "matched": False}
+
+    if event_type in ("BILLING.SUBSCRIPTION.ACTIVATED", "PAYMENT.SALE.COMPLETED", "BILLING.SUBSCRIPTION.RENEWED"):
+        await _activate_pro(order["user_id"], order["plan_id"], "paypal", order["_id"], subscription_id)
+        await db.orders.update_one({"_id": order["_id"]}, {"$set": {"status": "paid"}})
+    elif event_type in (
+        "BILLING.SUBSCRIPTION.CANCELLED",
+        "BILLING.SUBSCRIPTION.EXPIRED",
+        "BILLING.SUBSCRIPTION.SUSPENDED",
+    ):
+        await db.subscriptions.update_one(
+            {"user_id": order["user_id"], "deleted_at": None},
+            {"$set": {"status": "canceled", "updated_at": now_utc()}},
+        )
+    return {"ok": True, "matched": True, "event": event_type}
 
 
 @api.post("/subscription/webhook/{provider}")
@@ -567,14 +715,17 @@ async def restore(user: CurrentUser):
 
 @api.post("/subscription/cancel")
 async def cancel(user: CurrentUser):
+    sub = await db.subscriptions.find_one({"user_id": str(user["_id"]), "deleted_at": None})
+    if sub and sub.get("provider") == "paypal" and sub.get("paypal_subscription_id") and paypal.configured():
+        await paypal.cancel_subscription(sub["paypal_subscription_id"])
     await db.subscriptions.update_one(
         {"user_id": str(user["_id"]), "deleted_at": None},
-        {"$set": {"status": "canceled"}},
+        {"$set": {"status": "canceled", "updated_at": now_utc()}},
     )
     return await get_entitlement(str(user["_id"]))
 
 
-async def _activate_pro(user_id: str, plan_id: str, provider: str, order_id):
+async def _activate_pro(user_id: str, plan_id: str, provider: str, order_id, subscription_id=None):
     days = 365 if plan_id == "pro_yearly" else 31
     doc = {
         "user_id": user_id,
@@ -587,6 +738,8 @@ async def _activate_pro(user_id: str, plan_id: str, provider: str, order_id):
         "updated_at": now_utc(),
         "deleted_at": None,
     }
+    if subscription_id:
+        doc["paypal_subscription_id"] = subscription_id
     await db.subscriptions.update_one(
         {"user_id": user_id, "deleted_at": None},
         {"$set": doc, "$setOnInsert": {"created_at": now_utc()}},
