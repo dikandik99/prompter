@@ -1,0 +1,43 @@
+{
+  "summary": "Full-stack smoke of PROMPTERA — backend pytest 20/20 passed; frontend web preview functional. Backend covers health/config, auth (register+dup+login+me invalid/valid), pricing (ID IDR Rp249.000 / Rp1.199.000 / monthly_equivalent Rp99.917 + savings_pct, US USD), subscription (me/checkout pending/dev-activate->pro/cancel->free), AI gateway disabled (503), /ai/usage enabled=false, /ai/languages (13 langs + 5 modes), analytics allow/deny. Frontend covers onboarding skip + permission step + finish, scripts list with seeded samples, search filter, chip filter, favorite toggle, open editor via card, create new script, editor title/content/word/char/duration/speed chips, Tools tab grid, Library tab empty state, Settings tab (Teleprompter + Camera controls visible), Paywall loads backend pricing (Rp249.000, Rp1.199.000, ≈Rp99.917/bln, hemat 60%, 'PALING HEMAT' badge on yearly), Auth register flow returns to tabs, dev-activate flips user to PRO (settings badge shows PRO), standalone teleprompter at /teleprompter?scriptId=sample_1 renders script, countdown animates, and faster/font-up/mirror/play controls work. No deprecated expo packages. AI translate 503 and checkout pending are by design.",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "paywall", "issues": ["'paywall-demo-activate' button sits below the fold on 390x844; requires scroll to be visible. Consider adding bottom padding or sticky secondary action so it is reachable without manual scroll on small devices."]}
+    ],
+    "react_native_issues": [
+      {"component": "styles (web)", "issue": "Console warning: 'shadow*' style props are deprecated. Use 'boxShadow'. Appears on initial render. Non-blocking but should migrate StyleSheet shadow* -> boxShadow for react-native-web compatibility."}
+    ]
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_promptera_api.py",
+    "/app/test_reports/pytest/pytest_results.xml"
+  ],
+  "action_items": [
+    "(Optional, polish) Migrate StyleSheet shadow* props to boxShadow to silence RN-web deprecation warnings.",
+    "(Optional UX) Ensure 'Simulasikan pembayaran (demo)' button on paywall is visible without manual scroll on small viewports."
+  ],
+  "critical_code_review_comments": [
+    "server.py <600 lines, async MongoDB via Motor, EmailStr validation, bcrypt, JWT with iss/aud, DuplicateKeyError -> 409 — clean.",
+    "ObjectId correctly converted to str via public_user(); no _id leakage.",
+    "Pricing is backend-driven and localized (IDR dot thousands, USD with 2 decimals). Monthly equivalent correctly computed.",
+    "AI translate is cleanly disabled via DEEPSEEK_API_KEY empty check -> 503 (by design).",
+    "Analytics event allowlist prevents arbitrary event writes.",
+    "Pydantic EmailStr rejects .test TLD; test suite uses .app domains."
+  ],
+  "updated_files": [
+    "/app/backend/tests/__init__.py (new)",
+    "/app/backend/tests/test_promptera_api.py (new, 20 tests)"
+  ],
+  "success_rate": {"backend": "100% (20/20)", "frontend": "100% of covered flows (onboarding, scripts, editor, tools, library, settings, paywall, auth-register, dev-activate to PRO, teleprompter standalone)"},
+  "seed_data_creation": "Backend tests register fresh users with prefix test_<uuid>@promptera.app each run. UI test registered ui<ts>@promptera.app and dev-activated to PRO. No shared/global seed modified.",
+  "retest_needed": false,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "Clear web localStorage before testing onboarding (localStorage.clear() + reload). Onboarding path: click text 'Lewati' then [data-testid=onboarding-finish]. EmailStr rejects .test TLD -- use .app. Paywall demo-activate button is below the fold on 390x844 -- scrollTo bottom first. Teleprompter standalone URL: /teleprompter?scriptId=sample_1 (sample_1/sample_2 are seeded). Backend AI translate returns 503 by design (DEEPSEEK_API_KEY empty), checkout returns pending by design.",
+  "rca_of_issue": "N/A — no bugs reproduced. Initial pytest run failed with 422 because Pydantic EmailStr blocked the .test TLD (reserved); fixed by using @promptera.app in generated test emails. UI 'fav filter empty after toggle' was a test-side false-negative: sample_1 ships with isFavorite=true, so a single star tap toggled it OFF and the Favorit chip correctly rendered empty — behaviour is correct."
+}
