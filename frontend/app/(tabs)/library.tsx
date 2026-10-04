@@ -1,5 +1,5 @@
 import { useRouter } from "expo-router";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { FlatList, Pressable, StyleSheet, Text, TextInput, View } from "react-native";
 import * as Sharing from "expo-sharing";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -10,6 +10,7 @@ import { ActionSheet, SheetAction } from "@/src/components/Sheet";
 import { EmptyState, IconButton } from "@/src/components/ui";
 import { useToast } from "@/src/components/Toast";
 import { useI18n } from "@/src/i18n";
+import { generateThumbnail } from "@/src/lib/thumbnails";
 import { useLibrary, type Recording } from "@/src/store/library";
 import { makeStyles, radius, spacing, useTheme } from "@/src/theme";
 
@@ -20,12 +21,26 @@ export default function LibraryScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
   const toast = useToast();
-  const { recordings, deleteRecording, toggleFavoriteRecording } = useLibrary();
+  const { recordings, deleteRecording, toggleFavoriteRecording, updateRecording } = useLibrary();
 
   const [grid, setGrid] = useState(true);
   const [query, setQuery] = useState("");
   const [favOnly, setFavOnly] = useState(false);
   const [menuFor, setMenuFor] = useState<Recording | null>(null);
+
+  // Backfill frame previews for clips recorded before thumbnails existed.
+  const attempted = useRef(new Set<string>());
+  useEffect(() => {
+    const missing = recordings.filter((r) => !r.thumbnailUri && r.uri && !attempted.current.has(r.id));
+    if (!missing.length) return;
+    (async () => {
+      for (const r of missing) {
+        attempted.current.add(r.id);
+        const thumb = await generateThumbnail(r.uri);
+        if (thumb) updateRecording(r.id, { thumbnailUri: thumb });
+      }
+    })();
+  }, [recordings, updateRecording]);
 
   const filtered = useMemo(() => {
     let list = [...recordings];

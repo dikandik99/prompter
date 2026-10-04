@@ -32,14 +32,19 @@ Build a professional, production-grade Creator Camera + Teleprompter app ("PROMP
 - Auth screen + Account screen (subscription status, cancel).
 - Legal (Terms/Privacy placeholders), i18n (ID/EN).
 
+## Implemented (2026-06, iteration 2)
+- Folder Manager (`src/components/folders.tsx`): create / rename / delete folders (sheet from Scripts header), "Pindah ke folder" picker in script menu incl. create-on-the-spot. Store: `renameFolder`, `moveScript`.
+- Recording thumbnails: `expo-video-thumbnails` frame grab on record (`camera.tsx`) + backfill for older clips in Library (`src/lib/thumbnails.ts`). Native only.
+- Google Sign-In (Emergent managed auth): `POST /api/auth/session {session_id}` exchanges with Emergent, upserts user by email (identities += google), issues PROMPTERA JWT. Frontend `loginWithGoogle()` in AuthProvider (web redirect + native openAuthSessionAsync + deep-link fallbacks), Google button on `/auth`. Password login on Google-only accounts returns a clear 401.
+
 ## Honest limitations
-- Camera recording / video playback / save-to-gallery: native only (not web preview). Mirror-save of final video not post-processed (preview mirror only) — flagged.
+- Camera recording / video playback / save-to-gallery / thumbnails: native only (not web preview). Mirror-save of final video not post-processed (preview mirror only) — flagged.
 - VoiceGlide voice-following: architecture + manual mode only (no on-device ASR yet).
 - DOCX/PDF import: .txt supported; DOCX/PDF stubbed with user message.
 - Payments: real Midtrans/DANA/PayPal/RevenueCat need server credentials + webhooks; entitlement system is real and testable via dev-activate.
 - Translation: disabled until DeepSeek key set server-side.
 
 ## Backlog / Next
-- P1: Move-to-folder UI, folder create/manage UI, rich-text highlights, sort options.
-- P1: Google/Apple sign-in; cloud sync of scripts.
-- P2: Live DeepSeek key wiring + AI hook/CTA/rewrite; VoiceGlide on-device ASR; save-mirrored transcode; DOCX/PDF parsing; thumbnails for recordings.
+- P1: rich-text highlights, sort options; Apple sign-in; cloud sync of scripts.
+- P2: Live DeepSeek key wiring + AI hook/CTA/rewrite; VoiceGlide on-device ASR; save-mirrored transcode; DOCX/PDF parsing.
+- P3: Folder sheet polish (auto-scroll to row on rename); migrate RN-web `shadow*` warnings.

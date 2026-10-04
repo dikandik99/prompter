@@ -5,8 +5,9 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import Ionicons from "@react-native-vector-icons/ionicons";
 
 import { ScriptCard } from "@/src/components/cards";
+import { FolderManager, FolderPicker } from "@/src/components/folders";
 import { ActionSheet, SheetAction } from "@/src/components/Sheet";
-import { Chip, EmptyState } from "@/src/components/ui";
+import { Chip, EmptyState, IconButton } from "@/src/components/ui";
 import { useToast } from "@/src/components/Toast";
 import { useI18n } from "@/src/i18n";
 import { useLibrary, type Script } from "@/src/store/library";
@@ -19,11 +20,13 @@ export default function ScriptsScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
   const toast = useToast();
-  const { scripts, folders, deleteScript, duplicateScript, toggleFavoriteScript } = useLibrary();
+  const { scripts, folders, deleteScript, duplicateScript, toggleFavoriteScript, moveScript } = useLibrary();
 
   const [query, setQuery] = useState("");
   const [filter, setFilter] = useState<string>("all");
   const [menuFor, setMenuFor] = useState<Script | null>(null);
+  const [manageOpen, setManageOpen] = useState(false);
+  const [moveFor, setMoveFor] = useState<Script | null>(null);
 
   const filtered = useMemo(() => {
     let list = [...scripts].sort((a, b) => b.updatedAt - a.updatedAt);
@@ -42,6 +45,7 @@ export default function ScriptsScreen() {
     ? [
         { label: t("editor.record"), icon: "videocam", onPress: () => router.push(`/camera?scriptId=${menuFor.id}`) },
         { label: t("editor.teleprompter"), icon: "tv", onPress: () => router.push(`/teleprompter?scriptId=${menuFor.id}`) },
+        { label: t("folders.move"), icon: "folder-open", onPress: () => setMoveFor(menuFor) },
         {
           label: "Duplikat",
           icon: "copy",
@@ -66,10 +70,13 @@ export default function ScriptsScreen() {
     <View style={[styles.container, { paddingTop: insets.top + spacing.sm }]} testID="scripts-screen">
       <View style={styles.headerRow}>
         <Text style={styles.title}>{t("scripts.title")}</Text>
-        <Pressable style={styles.createBtn} onPress={() => router.push("/editor/new")} testID="create-script-button">
-          <Ionicons name="add" size={22} color={colors.onBrandPrimary} />
-          <Text style={styles.createText}>{t("scripts.new")}</Text>
-        </Pressable>
+        <View style={styles.headerActions}>
+          <IconButton icon="folder-outline" onPress={() => setManageOpen(true)} testID="manage-folders-button" />
+          <Pressable style={styles.createBtn} onPress={() => router.push("/editor/new")} testID="create-script-button">
+            <Ionicons name="add" size={22} color={colors.onBrandPrimary} />
+            <Text style={styles.createText}>{t("scripts.new")}</Text>
+          </Pressable>
+        </View>
       </View>
 
       <View style={styles.searchBar}>
@@ -137,6 +144,18 @@ export default function ScriptsScreen() {
         title={menuFor?.title || "Skrip"}
         actions={menuActions}
       />
+      <FolderManager visible={manageOpen} onClose={() => setManageOpen(false)} />
+      <FolderPicker
+        visible={!!moveFor}
+        onClose={() => setMoveFor(null)}
+        currentFolderId={moveFor?.folderId ?? null}
+        onSelect={(folderId) => {
+          if (moveFor) {
+            moveScript(moveFor.id, folderId);
+            toast.show(t("folders.moved"), "success");
+          }
+        }}
+      />
     </View>
   );
 }
@@ -144,6 +163,7 @@ export default function ScriptsScreen() {
 const useStyles = makeStyles((colors) => ({
   container: { flex: 1, backgroundColor: colors.surface },
   headerRow: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", paddingHorizontal: spacing.lg, marginBottom: spacing.md },
+  headerActions: { flexDirection: "row", alignItems: "center", gap: spacing.sm },
   title: { color: colors.onSurface, fontSize: 30, fontWeight: "800" },
   createBtn: { flexDirection: "row", alignItems: "center", gap: 4, backgroundColor: colors.brand, paddingHorizontal: spacing.md, height: 40, borderRadius: radius.pill },
   createText: { color: colors.onBrandPrimary, fontWeight: "700", fontSize: 14 },

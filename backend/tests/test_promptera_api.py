@@ -96,6 +96,38 @@ class TestAuth:
         assert body["entitlement"]["plan"] == "free"
 
 
+    # --- Google Sign-In session endpoint (new) ---
+    def test_google_session_invalid_returns_401(self, client):
+        """Bogus session_id -> Emergent returns non-200 -> we respond 401."""
+        r = client.post(f"{API}/auth/session", json={"session_id": "bogus-not-a-real-session"})
+        assert r.status_code == 401, f"expected 401, got {r.status_code} {r.text}"
+        body = r.json()
+        assert "detail" in body
+        assert isinstance(body["detail"], str) and body["detail"]
+
+    def test_google_session_missing_field_422(self, client):
+        r = client.post(f"{API}/auth/session", json={})
+        assert r.status_code == 422
+
+    def test_google_session_empty_field_422(self, client):
+        """min_length=1 on session_id -> empty string triggers Pydantic 422."""
+        r = client.post(f"{API}/auth/session", json={"session_id": ""})
+        assert r.status_code == 422
+
+    def test_seeded_creator_login(self, client):
+        """Smoke test the shared creator credentials still work."""
+        r = client.post(f"{API}/auth/login", json={"email": "creator@promptera.app", "password": "secret123"})
+        if r.status_code == 404 or r.status_code == 401:
+            pytest.skip("Shared creator account not seeded in this environment")
+        assert r.status_code == 200, f"creator login failed: {r.status_code} {r.text}"
+        data = r.json()
+        assert data["access_token"]
+        # /auth/me works with that token
+        me = client.get(f"{API}/auth/me", headers=auth_headers(data["access_token"]))
+        assert me.status_code == 200
+        assert me.json()["email"] == "creator@promptera.app"
+
+
 # ---------------- pricing ----------------
 class TestPricing:
     def test_pricing_id_idr(self, client):

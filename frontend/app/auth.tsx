@@ -1,6 +1,6 @@
 import { useRouter } from "expo-router";
 import { useState } from "react";
-import { Pressable, StyleSheet, Text, TextInput, View } from "react-native";
+import { ActivityIndicator, Pressable, StyleSheet, Text, TextInput, View } from "react-native";
 import { KeyboardAwareScrollView } from "react-native-keyboard-controller";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { LinearGradient } from "expo-linear-gradient";
@@ -19,13 +19,29 @@ export default function Auth() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
   const toast = useToast();
-  const { login, register } = useAuth();
+  const { login, register, loginWithGoogle } = useAuth();
 
   const [mode, setMode] = useState<"login" | "register">("login");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [name, setName] = useState("");
   const [busy, setBusy] = useState(false);
+  const [googleBusy, setGoogleBusy] = useState(false);
+
+  async function google() {
+    setGoogleBusy(true);
+    try {
+      const ok = await loginWithGoogle();
+      if (ok) {
+        toast.show("Selamat datang!", "success");
+        router.back();
+      }
+    } catch (e: any) {
+      toast.show(e.message || t("auth.googleFailed"), "error");
+    } finally {
+      setGoogleBusy(false);
+    }
+  }
 
   async function submit() {
     if (!email.trim() || password.length < 6) {
@@ -57,6 +73,28 @@ export default function Auth() {
         </LinearGradient>
         <Text style={styles.title}>{mode === "login" ? t("auth.login") : t("auth.register")}</Text>
         <Text style={styles.subtitle}>Sinkronisasi skrip, langganan & fitur AI</Text>
+
+        <Pressable
+          onPress={google}
+          disabled={googleBusy || busy}
+          style={({ pressed }) => [styles.googleBtn, (pressed || googleBusy) && { opacity: 0.8 }]}
+          testID="auth-google"
+        >
+          {googleBusy ? (
+            <ActivityIndicator color={GOOGLE_TEXT} />
+          ) : (
+            <>
+              <Ionicons name="logo-google" size={20} color={GOOGLE_TEXT} />
+              <Text style={styles.googleText}>{t("auth.google")}</Text>
+            </>
+          )}
+        </Pressable>
+
+        <View style={styles.orRow}>
+          <View style={styles.orLine} />
+          <Text style={styles.orText}>{t("auth.or")}</Text>
+          <View style={styles.orLine} />
+        </View>
 
         <View style={styles.form}>
           {mode === "register" ? (
@@ -92,12 +130,21 @@ function Field(props: any) {
   );
 }
 
+// Google brand button: white surface + dark text stays identical across themes.
+const GOOGLE_BG = "#FFFFFF";
+const GOOGLE_TEXT = "#1F1F1F";
+
 const useStyles = makeStyles((colors) => ({
   container: { flex: 1, backgroundColor: colors.surface },
   close: { alignSelf: "flex-start", marginBottom: spacing.lg },
   logo: { width: 72, height: 72, borderRadius: radius.lg, alignItems: "center", justifyContent: "center", marginBottom: spacing.lg },
   title: { color: colors.onSurface, fontSize: 28, fontWeight: "800" },
   subtitle: { color: colors.muted, fontSize: 15, marginTop: spacing.xs, marginBottom: spacing.xl },
+  googleBtn: { flexDirection: "row", alignItems: "center", justifyContent: "center", gap: spacing.sm, height: 54, borderRadius: radius.lg, backgroundColor: GOOGLE_BG },
+  googleText: { color: GOOGLE_TEXT, fontSize: 16, fontWeight: "700" },
+  orRow: { flexDirection: "row", alignItems: "center", gap: spacing.md, marginVertical: spacing.lg },
+  orLine: { flex: 1, height: StyleSheet.hairlineWidth, backgroundColor: colors.border },
+  orText: { color: colors.muted, fontSize: 13, fontWeight: "600" },
   form: { gap: spacing.md },
   field: { flexDirection: "row", alignItems: "center", gap: spacing.md, backgroundColor: colors.surfaceTertiary, borderRadius: radius.md, paddingHorizontal: spacing.md, height: 54 },
   input: { flex: 1, color: colors.onSurface, fontSize: 16 },

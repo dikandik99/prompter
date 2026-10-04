@@ -1,0 +1,37 @@
+{
+  "summary": "Full-stack verification of folder manager, folder picker, move, persistence, Google Sign-In endpoint & /auth screen redirect. Backend pytest: 24/24 passed including new POST /api/auth/session cases (bogus->401, missing field->422, empty string->422) and seeded creator@promptera.app login + /auth/me regression. Frontend (390x844): onboarding dismissed, scripts-screen renders, manage-folders-button opens folder-manager sheet with the 7 default folders (f_tiktok/f_instagram/f_youtube/f_review/f_ads/f_education/f_personal). Create via folder-new-input + folder-new-add shows toast 'Folder dibuat' and new chip in filter bar. Rename via pencil + folder-rename-save updates row and chip to 'QA Folder Renamed'. Delete f_tiktok shows toast 'Folder dihapus', sample_1 remains under 'Semua' and its 'TikTok' folder tag disappears. Move: script-card-sample_2-menu -> sheet-action-folder-open -> folder-picker opens with folder-option-none; selecting folder-option-f_youtube shows toast 'Skrip dipindahkan' and card tag becomes 'YouTube'; chip-f_youtube filter shows the script. Create-from-picker (folder-picker-new-input + folder-picker-new-add) immediately moves sample_2 to 'FromPicker' and adds a chip. Persistence: after full reload, 'FromPicker' chip and sample_2 tag persist (AsyncStorage). /auth screen renders auth-google 'Lanjutkan dengan Google' above the 'atau' divider and the email form (geom check: google.top=229 < email.top=348); clicking it redirects window.location to https://auth.emergentagent.com/oauth/?redirect=<origin>%2F. Only pre-existing non-blocking warning: react-native-web 'shadow*' prop deprecation (already reported in iteration_1).",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "folder-manager", "issues": ["With many folders the create/rename controls fall below the modal fold on a 390x844 viewport; test needed JS click to reach folder-new-add and folder-rename-{id}. Users still reach them via scroll inside the sheet, but consider auto-scrolling the FlatList to the active row when rename is tapped on an off-screen entry."]}
+    ],
+    "react_native_issues": [
+      {"component": "styles (web)", "issue": "Pre-existing react-native-web console warning: 'shadow*' style props are deprecated. Use 'boxShadow'. Reproduces on initial render; non-blocking. Already captured in iteration_1."}
+    ]
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_promptera_api.py",
+    "/app/test_reports/pytest/pytest_results.xml"
+  ],
+  "action_items": [
+    "(Optional UX) Auto-scroll the folder-manager FlatList to the row being renamed and keep the create input visible when the keyboard is up, so controls remain reachable without manual scroll on 390x844.",
+    "(Optional, polish) Migrate StyleSheet shadow* -> boxShadow to silence RN-web deprecation warning."
+  ],
+  "critical_code_review_comments": [
+    "server.py: /auth/session validates session_id with Pydantic (min_length=1 -> 422 on empty), exchanges via Emergent, upserts user by email, mints JWT. Non-200 from Emergent -> 401 with explicit detail. No ObjectId leakage (public_user() used).",
+    "AuthProvider.tsx: web branch of loginWithGoogle computes window.location.origin + '/' and redirects to AUTH_URL with ?redirect=; hash/search session_id extracted on return and exchanged via /auth/session; exchange guarded by a Set to prevent double-use. Native branch covers both openAuthSessionAsync result and hot deep-link listener.",
+    "folders.tsx: FolderManager + FolderPicker share a SheetShell with KeyboardAvoidingView; testIDs on every interactive element (folder-manager, folder-new-input/add, folder-row-<id>, folder-rename-<id>, folder-rename-input-<id>, folder-rename-save-<id>, folder-delete-<id>, folder-picker, folder-option-<id|none>, folder-picker-new-input/add). Rename commits onBlur AND onSubmitEditing/save — good robustness.",
+    "library.tsx store: deleteFolder correctly reparents orphaned scripts to folderId=null (so sample_1 stays in 'Semua' with no folder tag after f_tiktok is removed). moveScript persists via storage.setItem; createFolder returns the new Folder so FolderPicker can select it immediately. Uses functional setState -> race-safe."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_promptera_api.py (added 4 tests: google session invalid/missing/empty + seeded creator login regression)"
+  ],
+  "success_rate": {"backend": "100% (24/24)", "frontend": "100% of covered flows (folder create/rename/delete, chip reflect, action-sheet->picker move, picker-create+move, reload persistence, /auth google button layout + redirect to auth.emergentagent.com)"},
+  "seed_data_creation": "Backend tests register fresh test_<uuid>@promptera.app users each run. Creator account creator@promptera.app/secret123 is expected to pre-exist (test skips if 401/404). UI test created local-only folders ('QA Folder' renamed to 'QA Folder Renamed', 'FromPicker') via AsyncStorage; nothing persisted server-side.",
+  "retest_needed": false,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "Onboarding buttons on this build are 'Lewati'/'Lanjut'/'Mulai' (NOT 'Lanjutkan'). The folder-manager sheet is scrollable but Playwright 'click' may complain 'Element is outside of the viewport' for rows below the modal fold on 390x844 — use JS dispatchEvent('click') to bypass. Google button on /auth redirects to https://auth.emergentagent.com/oauth/?redirect=<origin>/ (note the /oauth/ path auto-appended by the Emergent host); do not follow all the way through. Backend /auth/session uses min_length=1 so empty string yields 422 (not 401).",
+  "rca_of_issue": "N/A — all requested features working as designed. No regressions in the previously-passing suite."
+}

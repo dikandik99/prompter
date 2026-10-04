@@ -10,6 +10,7 @@ import { Teleprompter, type TeleprompterHandle } from "@/src/components/Teleprom
 import { Button } from "@/src/components/ui";
 import { useToast } from "@/src/components/Toast";
 import { formatClock } from "@/src/lib/text";
+import { generateThumbnail } from "@/src/lib/thumbnails";
 import { useLibrary } from "@/src/store/library";
 import { useSettings } from "@/src/store/settings";
 import { makeStyles, radius, spacing, useTheme } from "@/src/theme";
@@ -85,10 +86,12 @@ export default function CameraScreen() {
     try {
       const video = await cameraRef.current?.recordAsync();
       if (video?.uri) {
+        const thumbnailUri = await generateThumbnail(video.uri);
         const rec = addRecording({
           scriptId: scriptId ?? null,
           scriptTitle: script?.title || "Rekaman",
           uri: video.uri,
+          thumbnailUri,
           durationMs: elapsedRef.current * 1000,
           resolution: cam.resolution,
           orientation: cam.ratio,

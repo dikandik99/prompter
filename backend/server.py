@@ -335,8 +335,71 @@ async def register(body: Credentials):
 async def login(body: LoginBody):
     email = body.email.lower().strip()
     row = await db.users.find_one({"email": email})
+    if row and not row.get("password_hash"):
+        raise HTTPException(401, "This account uses Google Sign-In. Continue with Google instead.", headers={"WWW-Authenticate": "Bearer"})
     if not row or not pwd.verify(body.password, row["password_hash"]):
         raise HTTPException(401, "Invalid email or password", headers={"WWW-Authenticate": "Bearer"})
+    return AuthResponse(
+        access_token=make_token(str(row["_id"])),
+        expires_in=ACCESS_MINUTES * 60,
+        user=public_user(row),
+    )
+
+
+class SessionBody(BaseModel):
+    session_id: str = Field(min_length=1, max_length=512)
+
+
+EMERGENT_SESSION_URL = "https://demobackend.emergentagent.com/auth/v1/env/oauth/session-data"
+
+
+@api.post("/auth/session", response_model=AuthResponse)
+async def google_session(body: SessionBody):
+    """Google Sign-In (Emergent managed OAuth).
+
+    Exchanges the one-time `session_id` from the OAuth redirect for the Google
+    profile, upserts the user by email and issues PROMPTERA's own JWT so the
+    rest of the API keeps working unchanged.
+    """
+    try:
+        async with httpx.AsyncClient(timeout=20) as hc:
+            resp = await hc.get(EMERGENT_SESSION_URL, headers={"X-Session-ID": body.session_id})
+    except httpx.HTTPError as exc:
+        logger.error("Google session exchange failed: %s", exc)
+        raise AuthError("Google sign-in could not be completed")
+    if resp.status_code != 200:
+        raise AuthError("Google sign-in session is invalid or expired")
+    data = resp.json()
+    email = (data.get("email") or "").lower().strip()
+    if not email:
+        raise AuthError("Google account has no email")
+    identity = {"provider": "google", "provider_identity": f"google:{data.get('id') or email}"}
+    row = await db.users.find_one({"email": email})
+    if row:
+        patch: dict = {}
+        if not row.get("name") and data.get("name"):
+            patch["name"] = data["name"]
+        if data.get("picture") and not row.get("photo_url"):
+            patch["photo_url"] = data["picture"]
+        update: dict = {"$addToSet": {"identities": identity}}
+        if patch:
+            update["$set"] = patch
+        await db.users.update_one({"_id": row["_id"]}, update)
+        row = await db.users.find_one({"_id": row["_id"]})
+    else:
+        row = {
+            "email": email,
+            "name": (data.get("name") or "").strip(),
+            "password_hash": None,
+            "photo_url": data.get("picture"),
+            "created_at": now_utc(),
+            "disabled": False,
+            "identities": [identity],
+        }
+        res = await db.users.insert_one(row)
+        row["_id"] = res.inserted_id
+    if row.get("disabled"):
+        raise AuthError("Account disabled")
     return AuthResponse(
         access_token=make_token(str(row["_id"])),
         expires_in=ACCESS_MINUTES * 60,

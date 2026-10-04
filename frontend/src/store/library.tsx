@@ -93,7 +93,9 @@ type Ctx = {
   toggleFavoriteScript: (id: string) => void;
   getScript: (id: string) => Script | undefined;
   createFolder: (name: string) => Folder;
+  renameFolder: (id: string, name: string) => void;
   deleteFolder: (id: string) => void;
+  moveScript: (scriptId: string, folderId: string | null) => void;
   addRecording: (data: Partial<Recording>) => Recording;
   updateRecording: (id: string, patch: Partial<Recording>) => void;
   deleteRecording: (id: string) => void;
@@ -224,6 +226,22 @@ export function LibraryProvider({ children }: { children: React.ReactNode }) {
     return folder;
   }, []);
 
+  const renameFolder = useCallback((id: string, name: string) => {
+    setFolders((prev) => {
+      const next = prev.map((f) => (f.id === id ? { ...f, name } : f));
+      storage.setItem(FOLDERS_KEY, next);
+      return next;
+    });
+  }, []);
+
+  const moveScript = useCallback((scriptId: string, folderId: string | null) => {
+    setScripts((prev) => {
+      const next = prev.map((s) => (s.id === scriptId ? { ...s, folderId } : s));
+      storage.setItem(SCRIPTS_KEY, next);
+      return next;
+    });
+  }, []);
+
   const deleteFolder = useCallback((id: string) => {
     setFolders((prev) => {
       const next = prev.filter((f) => f.id !== id);
@@ -296,13 +314,15 @@ export function LibraryProvider({ children }: { children: React.ReactNode }) {
       toggleFavoriteScript,
       getScript,
       createFolder,
+      renameFolder,
       deleteFolder,
+      moveScript,
       addRecording,
       updateRecording,
       deleteRecording,
       toggleFavoriteRecording,
     }),
-    [ready, scripts, folders, recordings, createScript, updateScript, deleteScript, duplicateScript, toggleFavoriteScript, getScript, createFolder, deleteFolder, addRecording, updateRecording, deleteRecording, toggleFavoriteRecording],
+    [ready, scripts, folders, recordings, createScript, updateScript, deleteScript, duplicateScript, toggleFavoriteScript, getScript, createFolder, renameFolder, deleteFolder, moveScript, addRecording, updateRecording, deleteRecording, toggleFavoriteRecording],
   );
 
   return <LibraryCtx.Provider value={value}>{children}</LibraryCtx.Provider>;
