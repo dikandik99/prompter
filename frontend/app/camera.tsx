@@ -63,6 +63,10 @@ export default function CameraScreen() {
       toast.show("Izin kamera & mikrofon diperlukan", "error");
       return;
     }
+    // Always start a fresh take from the top of the script — without this,
+    // a second take (or an earlier manual drag) would silently resume from
+    // wherever the teleprompter was left, making it look "stuck"/wrong.
+    teleRef.current?.restart();
     let n = tele.countdown;
     setCountdown(n);
     const iv = setInterval(() => {

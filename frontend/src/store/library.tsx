@@ -2,6 +2,7 @@ import React, { createContext, useContext, useEffect, useMemo, useState, useCall
 
 import { genId } from "@/src/lib/ids";
 import { countWords, estimateSeconds } from "@/src/lib/text";
+import { useSettings } from "@/src/store/settings";
 import { storage } from "@/src/utils/storage";
 
 export type Folder = { id: string; name: string; createdAt: number };
@@ -13,7 +14,7 @@ export type Script = {
   content: string;
   language: string;
   wordCount: number;
-  estimatedDuration: number; // seconds at 130 wpm
+  estimatedDuration: number; // seconds, based on the teleprompter "wpm" setting
   isFavorite: boolean;
   createdAt: number;
   updatedAt: number;
@@ -105,6 +106,8 @@ type Ctx = {
 const LibraryCtx = createContext<Ctx | null>(null);
 
 export function LibraryProvider({ children }: { children: React.ReactNode }) {
+  const { tele } = useSettings();
+  const wpm = tele.wpm;
   const [ready, setReady] = useState(false);
   const [scripts, setScripts] = useState<Script[]>([]);
   const [folders, setFolders] = useState<Folder[]>([]);
@@ -117,11 +120,11 @@ export function LibraryProvider({ children }: { children: React.ReactNode }) {
       const storedRec = await storage.getItem<Recording[] | null>(RECORDINGS_KEY, null);
 
       if (storedScripts == null) {
-        const seeded = SAMPLE_SCRIPTS.map((s) => hydrate(s));
+        const seeded = SAMPLE_SCRIPTS.map((s) => hydrate(s, wpm));
         setScripts(seeded);
         storage.setItem(SCRIPTS_KEY, seeded);
       } else {
-        setScripts(storedScripts.map((s) => hydrate(s)));
+        setScripts(storedScripts.map((s) => hydrate(s, wpm)));
       }
 
       if (storedFolders == null) {
@@ -134,7 +137,20 @@ export function LibraryProvider({ children }: { children: React.ReactNode }) {
       setRecordings(storedRec ?? []);
       setReady(true);
     })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // Keep every script's estimated duration in sync with the user's "Kata per
+  // menit" setting (not just at creation/edit time) so the reading-pace
+  // control visibly affects durations shown across Scripts/Library/Record.
+  useEffect(() => {
+    if (!ready) return;
+    setScripts((prev) => {
+      const next = prev.map((s) => hydrate(s, wpm));
+      storage.setItem(SCRIPTS_KEY, next);
+      return next;
+    });
+  }, [wpm, ready]);
 
   const persistScripts = useCallback((next: Script[]) => {
     setScripts(next);
@@ -152,18 +168,21 @@ export function LibraryProvider({ children }: { children: React.ReactNode }) {
   const createScript = useCallback(
     (data: Partial<Script> = {}) => {
       const now = Date.now();
-      const base: Script = hydrate({
-        id: genId(),
-        folderId: data.folderId ?? null,
-        title: data.title ?? "",
-        content: data.content ?? "",
-        language: data.language ?? "id",
-        wordCount: 0,
-        estimatedDuration: 0,
-        isFavorite: false,
-        createdAt: now,
-        updatedAt: now,
-      });
+      const base: Script = hydrate(
+        {
+          id: genId(),
+          folderId: data.folderId ?? null,
+          title: data.title ?? "",
+          content: data.content ?? "",
+          language: data.language ?? "id",
+          wordCount: 0,
+          estimatedDuration: 0,
+          isFavorite: false,
+          createdAt: now,
+          updatedAt: now,
+        },
+        wpm,
+      );
       setScripts((prev) => {
         const next = [base, ...prev];
         storage.setItem(SCRIPTS_KEY, next);
@@ -171,18 +190,18 @@ export function LibraryProvider({ children }: { children: React.ReactNode }) {
       });
       return base;
     },
-    [],
+    [wpm],
   );
 
   const updateScript = useCallback((id: string, patch: Partial<Script>) => {
     setScripts((prev) => {
       const next = prev.map((s) =>
-        s.id === id ? hydrate({ ...s, ...patch, updatedAt: Date.now() }) : s,
+        s.id === id ? hydrate({ ...s, ...patch, updatedAt: Date.now() }, wpm) : s,
       );
       storage.setItem(SCRIPTS_KEY, next);
       return next;
     });
-  }, []);
+  }, [wpm]);
 
   const deleteScript = useCallback((id: string) => {
     setScripts((prev) => {
@@ -198,13 +217,13 @@ export function LibraryProvider({ children }: { children: React.ReactNode }) {
       const src = prev.find((s) => s.id === id);
       if (!src) return prev;
       const now = Date.now();
-      created = hydrate({ ...src, id: genId(), title: `${src.title || "Untitled"} (copy)`, createdAt: now, updatedAt: now, isFavorite: false });
+      created = hydrate({ ...src, id: genId(), title: `${src.title || "Untitled"} (copy)`, createdAt: now, updatedAt: now, isFavorite: false }, wpm);
       const next = [created, ...prev];
       storage.setItem(SCRIPTS_KEY, next);
       return next;
     });
     return created;
-  }, []);
+  }, [wpm]);
 
   const toggleFavoriteScript = useCallback((id: string) => {
     setScripts((prev) => {

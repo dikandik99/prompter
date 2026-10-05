@@ -49,6 +49,19 @@ const DEFAULT_CAM: CameraSettings = {
 const TELE_KEY = "promptera.teleprompter";
 const CAM_KEY = "promptera.camera";
 
+// Keeps "Kecepatan scroll" (px/s) and "Kata per menit" (wpm) coherent: the
+// scroll engine only ever reads `speed`, but adjusting either control must
+// visibly change the actual auto-scroll pace. Ratio is calibrated to the
+// default (130 wpm <-> 40 px/s) so existing saved settings don't jump.
+const WPM_SPEED_RATIO = 40 / 130; // px/s per word-per-minute
+const SPEED_MIN = 10;
+const SPEED_MAX = 160;
+const WPM_MIN = 80;
+const WPM_MAX = 220;
+const clamp = (v: number, min: number, max: number) => Math.min(max, Math.max(min, v));
+export const speedFromWpm = (wpm: number) => clamp(Math.round((wpm * WPM_SPEED_RATIO) / 5) * 5, SPEED_MIN, SPEED_MAX);
+export const wpmFromSpeed = (speed: number) => clamp(Math.round((speed / WPM_SPEED_RATIO) / 5) * 5, WPM_MIN, WPM_MAX);
+
 type Ctx = {
   tele: TeleprompterSettings;
   cam: CameraSettings;
@@ -73,7 +86,14 @@ export function SettingsProvider({ children }: { children: React.ReactNode }) {
 
   const setTele = useCallback((patch: Partial<TeleprompterSettings>) => {
     setTeleState((prev) => {
-      const next = { ...prev, ...patch };
+      let next = { ...prev, ...patch };
+      // Only derive the counterpart when exactly one of the paired controls
+      // changed — avoids fighting an explicit combined update.
+      if (patch.wpm !== undefined && patch.speed === undefined) {
+        next = { ...next, speed: speedFromWpm(next.wpm) };
+      } else if (patch.speed !== undefined && patch.wpm === undefined) {
+        next = { ...next, wpm: wpmFromSpeed(next.speed) };
+      }
       storage.setItem(TELE_KEY, next);
       return next;
     });

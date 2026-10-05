@@ -1,10 +1,11 @@
 import { useRouter } from "expo-router";
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
 import { Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
 import { LinearGradient } from "expo-linear-gradient";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import Ionicons from "@react-native-vector-icons/ionicons";
 
+import { ActionSheet } from "@/src/components/Sheet";
 import { useI18n } from "@/src/i18n";
 import { useLibrary } from "@/src/store/library";
 import { formatDuration } from "@/src/lib/text";
@@ -17,11 +18,23 @@ export default function RecordScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
   const { scripts } = useLibrary();
+  const [pickerVisible, setPickerVisible] = useState(false);
 
   const recent = useMemo(
     () => [...scripts].sort((a, b) => b.updatedAt - a.updatedAt).slice(0, 6),
     [scripts],
   );
+
+  function openQuickRecord() {
+    // Without a script, the camera has no teleprompter text to show — ask
+    // which script to use first so "Rekam Cepat" always opens with the
+    // prompter active (unless the user explicitly picks "tanpa skrip").
+    if (recent.length === 0) {
+      router.push("/camera");
+      return;
+    }
+    setPickerVisible(true);
+  }
 
   return (
     <ScrollView
@@ -32,7 +45,7 @@ export default function RecordScreen() {
     >
       <Text style={styles.title}>{t("record.title")}</Text>
 
-      <Pressable onPress={() => router.push("/camera")} testID="quick-record-button">
+      <Pressable onPress={openQuickRecord} testID="quick-record-button">
         <LinearGradient colors={[colors.brand, colors.brandSecondary]} style={styles.hero} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }}>
           <View style={styles.recCircle}>
             <View style={styles.recDot} />
@@ -41,6 +54,20 @@ export default function RecordScreen() {
           <Text style={styles.heroSub}>{t("record.quick")}</Text>
         </LinearGradient>
       </Pressable>
+
+      <ActionSheet
+        visible={pickerVisible}
+        onClose={() => setPickerVisible(false)}
+        title="Pilih skrip untuk teleprompter"
+        actions={[
+          ...recent.map((s) => ({
+            label: s.title || "Untitled",
+            icon: "document-text-outline",
+            onPress: () => router.push(`/camera?scriptId=${s.id}`),
+          })),
+          { label: "Rekam tanpa skrip", icon: "videocam-outline", onPress: () => router.push("/camera") },
+        ]}
+      />
 
       <View style={styles.guide}>
         <Text style={styles.guideTitle}>Siap untuk merekam?</Text>
