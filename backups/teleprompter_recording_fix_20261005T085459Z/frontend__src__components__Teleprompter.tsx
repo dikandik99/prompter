@@ -61,10 +61,6 @@ export const Teleprompter = forwardRef<TeleprompterHandle, Props>(function Telep
   const viewH = useSharedValue(0);
   const dragging = useSharedValue(false);
   const reachedEnd = useSharedValue(false);
-  // Live list position reported by onScroll — updated during drag AND momentum.
-  // The frame loop compares it against `offset` to detect "the user is still
-  // moving the list" instead of fighting their gesture.
-  const liveOffset = useSharedValue(0);
 
   const [padV, setPadV] = useState(160); // vertical padding so lines sit near the lens
 
@@ -73,35 +69,14 @@ export const Teleprompter = forwardRef<TeleprompterHandle, Props>(function Telep
     speed.value = settings.speed;
   }, [settings.speed, speed]);
 
-  // Reset the reading position when the script itself changes, so a different
-  // script never resumes mid-way through the previous text.
-  useEffect(() => {
-    reachedEnd.value = false;
-    offset.value = 0;
-    liveOffset.value = 0;
-    runOnUI(() => {
-      "worklet";
-      scrollTo(aref, 0, 0, false);
-    })();
-  }, [content, offset, liveOffset, reachedEnd, aref]);
-
   // Single UI-thread scroll loop. Advances the offset by speed*dt each frame and
   // scrolls the list. Runs on the UI thread so it is unaffected by JS-thread load
   // during recording.
   const frame = useFrameCallback((info) => {
     "worklet";
     if (dragging.value) return;
-    // Clamp dt: after a pause/resume the reported frame gap can be the entire
-    // paused span, which would jump the text by speed * gap.
-    const dt = Math.min(Math.max((info.timeSincePreviousFrame ?? 16) / 1000, 0), 0.05);
+    const dt = (info.timeSincePreviousFrame ?? 16) / 1000;
     const max = Math.max(0, contentH.value - viewH.value);
-    // Drag/momentum in flight: follow the user's position, do not auto-advance.
-    const step = Math.abs(speed.value) * dt;
-    if (Math.abs(liveOffset.value - offset.value) > Math.max(2, step * 1.5)) {
-      offset.value = liveOffset.value;
-      if (liveOffset.value < max) reachedEnd.value = false;
-      return;
-    }
     let next = offset.value + speed.value * dt;
     if (max > 0 && next >= max) {
       next = max;
@@ -112,7 +87,6 @@ export const Teleprompter = forwardRef<TeleprompterHandle, Props>(function Telep
     }
     offset.value = next;
     scrollTo(aref, 0, next, false);
-    liveOffset.value = next;
   }, false);
 
   // Toggle the one loop on/off from the `playing` prop. Offset is preserved, so
@@ -165,26 +139,20 @@ export const Teleprompter = forwardRef<TeleprompterHandle, Props>(function Telep
       dragging.value = true;
     },
     onScroll: (e) => {
-      liveOffset.value = e.contentOffset.y;
       if (dragging.value) offset.value = e.contentOffset.y;
     },
     onEndDrag: (e) => {
-      liveOffset.value = e.contentOffset.y;
       offset.value = e.contentOffset.y;
       reachedEnd.value = false;
       dragging.value = false;
     },
     onMomentumEnd: (e) => {
-      liveOffset.value = e.contentOffset.y;
       offset.value = e.contentOffset.y;
       dragging.value = false;
     },
   });
 
   const textColor = settings.textColor === "orange" ? "#FF9500" : "#FFFFFF";
-  // Reading-zone marker follows the text colour instead of a hardcoded orange.
-  const markerColor =
-    settings.textColor === "orange" ? "rgba(255,149,0,0.35)" : "rgba(255,255,255,0.28)";
   const align =
     settings.position === "top" ? "flex-start" : settings.position === "bottom" ? "flex-end" : "center";
 
@@ -230,7 +198,7 @@ export const Teleprompter = forwardRef<TeleprompterHandle, Props>(function Telep
         </Text>
       </Animated.ScrollView>
       {/* reading-zone marker near the lens */}
-      <View style={[styles.readingZone, { backgroundColor: markerColor }]} pointerEvents="none" />
+      <View style={styles.readingZone} pointerEvents="none" />
     </View>
   );
 });
@@ -244,5 +212,6 @@ const styles = StyleSheet.create({
     right: 0,
     top: "38%",
     height: 3,
+    backgroundColor: "rgba(255,149,0,0.35)",
   },
 });

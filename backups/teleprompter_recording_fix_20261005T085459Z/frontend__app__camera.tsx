@@ -31,7 +31,6 @@ export default function CameraScreen() {
   const cameraRef = useRef<CameraView>(null);
   const teleRef = useRef<TeleprompterHandle>(null);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
-  const countdownRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const [facing, setFacing] = useState(cam.facing);
   const [countdown, setCountdown] = useState<number | null>(null);
@@ -44,13 +43,7 @@ export default function CameraScreen() {
   const content = script?.content ?? "";
   const isWeb = Platform.OS === "web";
 
-  useEffect(
-    () => () => {
-      if (timerRef.current) clearInterval(timerRef.current);
-      if (countdownRef.current) clearInterval(countdownRef.current);
-    },
-    [],
-  );
+  useEffect(() => () => { if (timerRef.current) clearInterval(timerRef.current); }, []);
 
   async function ensurePerms(): Promise<boolean> {
     let c = camPerm?.granted;
@@ -60,18 +53,7 @@ export default function CameraScreen() {
     return !!(c && m);
   }
 
-  function cancelCountdown() {
-    if (countdownRef.current) {
-      clearInterval(countdownRef.current);
-      countdownRef.current = null;
-    }
-    setCountdown(null);
-  }
-
   async function beginCountdown() {
-    // Guard: a countdown already in flight (or a running recording) must never
-    // start a second one — two intervals used to fire two recordAsync() calls.
-    if (countdownRef.current || countdown != null || recording) return;
     if (isWeb) {
       toast.show("Perekaman kamera hanya tersedia di perangkat (iOS/Android).", "info");
       return;
@@ -81,17 +63,12 @@ export default function CameraScreen() {
       toast.show("Izin kamera & mikrofon diperlukan", "error");
       return;
     }
-    // Always start a fresh take from the top of the script — without this,
-    // a second take (or an earlier manual drag) would silently resume from
-    // wherever the teleprompter was left, making it look "stuck"/wrong.
-    teleRef.current?.restart();
     let n = tele.countdown;
     setCountdown(n);
-    countdownRef.current = setInterval(() => {
+    const iv = setInterval(() => {
       n -= 1;
       if (n <= 0) {
-        if (countdownRef.current) clearInterval(countdownRef.current);
-        countdownRef.current = null;
+        clearInterval(iv);
         setCountdown(null);
         startRecording();
       } else {
@@ -108,28 +85,22 @@ export default function CameraScreen() {
     timerRef.current = setInterval(() => setElapsed((e) => e + 1), 1000);
     try {
       const video = await cameraRef.current?.recordAsync();
-      if (!video?.uri) {
-        // Recording ended without a file (aborted / interrupted). Previously it
-        // fell through silently and left the UI stuck in the "recording" state.
-        toast.show("Rekaman tidak tersimpan", "error");
-        return;
+      if (video?.uri) {
+        const thumbnailUri = await generateThumbnail(video.uri);
+        const rec = addRecording({
+          scriptId: scriptId ?? null,
+          scriptTitle: script?.title || "Rekaman",
+          uri: video.uri,
+          thumbnailUri,
+          durationMs: elapsedRef.current * 1000,
+          resolution: cam.resolution,
+          orientation: cam.ratio,
+          mirrored: facing === "front" && cam.saveMirrored,
+        });
+        router.replace(`/preview?recordingId=${rec.id}`);
       }
-      const thumbnailUri = await generateThumbnail(video.uri);
-      const rec = addRecording({
-        scriptId: scriptId ?? null,
-        scriptTitle: script?.title || "Rekaman",
-        uri: video.uri,
-        thumbnailUri,
-        durationMs: elapsedRef.current * 1000,
-        resolution: cam.resolution,
-        orientation: cam.ratio,
-        mirrored: facing === "front" && cam.saveMirrored,
-      });
-      router.replace(`/preview?recordingId=${rec.id}`);
     } catch {
       toast.show("Gagal merekam", "error");
-    } finally {
-      // Always release the recorder UI, whatever the camera returned.
       cleanupRecording();
     }
   }
@@ -141,11 +112,6 @@ export default function CameraScreen() {
     setRecording(false);
     setPlaying(false);
     if (timerRef.current) clearInterval(timerRef.current);
-    if (countdownRef.current) {
-      clearInterval(countdownRef.current);
-      countdownRef.current = null;
-    }
-    setCountdown(null);
   }
 
   function stopRecording() {
@@ -207,11 +173,7 @@ export default function CameraScreen() {
       {/* Top bar */}
       {controlsVisible ? (
         <Animated.View entering={FadeIn} exiting={FadeOut} style={[styles.topBar, { top: insets.top + spacing.sm }]}>
-          <Pressable
-            style={styles.circleBtn}
-            onPress={() => (recording ? stopRecording() : countdown != null ? cancelCountdown() : router.back())}
-            testID="camera-close"
-          >
+          <Pressable style={styles.circleBtn} onPress={() => (recording ? stopRecording() : router.back())} testID="camera-close">
             <Ionicons name="close" size={24} color="#FFFFFF" />
           </Pressable>
           {recording ? (

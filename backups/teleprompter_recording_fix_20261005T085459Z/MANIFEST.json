@@ -1,0 +1,16 @@
+{
+  "created_utc": "20261005T085459Z",
+  "scope": "FASE1 Teleprompter (M3,M4,M9,L1) + FASE2 Camera (H1,H3)",
+  "files": {
+    "frontend/src/components/Teleprompter.tsx": {
+      "backup": "frontend__src__components__Teleprompter.tsx",
+      "sha256": "adb40ab85f3d30ad89649c6c89017e54e30d6353203a116ac25a87a21af2ac11",
+      "bytes": 6824
+    },
+    "frontend/app/camera.tsx": {
+      "backup": "frontend__app__camera.tsx",
+      "sha256": "3b29da2455c05e8444ed0e721104b9682ced2438d330f31d344e44cbbf9a16fa",
+      "bytes": 13350
+    }
+  }
+}

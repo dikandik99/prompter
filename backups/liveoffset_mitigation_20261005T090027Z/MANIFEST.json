@@ -1,0 +1,7 @@
+{
+  "created_utc": "20261005T090027Z",
+  "scope": "mitigasi 1 baris: liveOffset.value = next setelah scrollTo di loop auto-scroll",
+  "file": "frontend/src/components/Teleprompter.tsx",
+  "sha256_before": "db62a9b946021a0f5ff476075555c22d8e95c70436d47ae117709593e86797e6",
+  "backup": "Teleprompter.tsx.pre"
+}

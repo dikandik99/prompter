@@ -112,7 +112,6 @@ export const Teleprompter = forwardRef<TeleprompterHandle, Props>(function Telep
     }
     offset.value = next;
     scrollTo(aref, 0, next, false);
-    liveOffset.value = next;
   }, false);
 
   // Toggle the one loop on/off from the `playing` prop. Offset is preserved, so
