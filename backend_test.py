@@ -11,7 +11,7 @@ import sys
 from typing import Optional
 
 # Backend URL from frontend/.env
-BASE_URL = "https://prompter-deps.preview.emergentagent.com/api"
+BASE_URL = "https://prompter-app-2.preview.emergentagent.com/api"
 
 # Test user credentials (will be generated)
 test_email = "paypal_test_user_2024@example.com"
